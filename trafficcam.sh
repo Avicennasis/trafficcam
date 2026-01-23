@@ -8,7 +8,7 @@
 # Author:      Léon "Avic" Simmons (@Avicennasis)
 # License:     MIT License
 # Repository:  https://github.com/Avicennasis/trafficcam
-# Updated:     2026-01-03
+# Updated:     2026-01-23
 #
 # Usage:       ./trafficcam.sh [options]
 #              Run without options for default behavior (10 images, 60s interval)
@@ -22,6 +22,9 @@
 # ------------------------------------------------------------------------------
 # CONFIGURATION - Modify these variables to customize behavior
 # ------------------------------------------------------------------------------
+
+# HTML email format flag (can be disabled with --html-off)
+USE_HTML_EMAIL=true
 
 # Number of images to capture and send
 readonly IMAGE_COUNT="${TRAFFICCAM_COUNT:-10}"
@@ -43,6 +46,9 @@ readonly TEMP_DIR="${TRAFFICCAM_TEMP:-${HOME}/TEMP}"
 
 # Temporary file path for the downloaded image
 readonly IMAGE_FILE="${TEMP_DIR}/cam.jpg"
+
+# Temporary file for HTML email body
+readonly HTML_FILE="${TEMP_DIR}/email_body.html"
 
 # Maximum retry attempts for failed downloads
 readonly MAX_RETRIES=3
@@ -155,22 +161,181 @@ download_image() {
 }
 
 # Sends the downloaded image as an email attachment
+# Arguments:
+#   $1 - Image number
+#   $2 - Total images
 # Returns:
 #   0 - Email sent successfully
 #   1 - Failed to send email
 send_email() {
+    local img_num="$1"
+    local total="$2"
     log "INFO" "Sending email to ${EMAIL_RECIPIENT}..."
 
-    # mpack sends the file as a MIME attachment
-    # -s: Subject line for the email
-    # -a: Attach the specified file
-    if mpack -s "${EMAIL_SUBJECT}" -a "${IMAGE_FILE}" "${EMAIL_RECIPIENT}" 2>/dev/null; then
-        log "SUCCESS" "Email sent successfully!"
-        return 0
+    if [[ "${USE_HTML_EMAIL}" == true ]]; then
+        # Generate HTML email body
+        generate_html_body "${img_num}" "${total}"
+
+        # Send email with HTML body and image attachment
+        # mpack -s: Subject line for the email
+        # First file is treated as the body (HTML)
+        # Subsequent files are attachments
+        if mpack -s "${EMAIL_SUBJECT}" "${HTML_FILE}" "${IMAGE_FILE}" "${EMAIL_RECIPIENT}" 2>/dev/null; then
+            log "SUCCESS" "Email sent successfully! (HTML format)"
+            return 0
+        else
+            log "ERROR" "Failed to send email."
+            return 1
+        fi
     else
-        log "ERROR" "Failed to send email."
-        return 1
+        # Send plain text email with attachment only
+        # mpack sends the file as a MIME attachment
+        # -s: Subject line for the email
+        if mpack -s "${EMAIL_SUBJECT}" "${IMAGE_FILE}" "${EMAIL_RECIPIENT}" 2>/dev/null; then
+            log "SUCCESS" "Email sent successfully! (Plain text)"
+            return 0
+        else
+            log "ERROR" "Failed to send email."
+            return 1
+        fi
     fi
+}
+
+# Generates HTML email body with styled table
+# Arguments:
+#   $1 - Image number
+#   $2 - Total images
+generate_html_body() {
+    local img_num="$1"
+    local total="$2"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    cat > "${HTML_FILE}" <<EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #ffffff;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .content {
+            padding: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #ffffff;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+            color: #333333;
+            font-size: 14px;
+        }
+        tr:last-child td {
+            border-bottom: none;
+        }
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+        .label {
+            font-weight: 600;
+            color: #667eea;
+        }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666666;
+            font-size: 12px;
+            border-top: 1px solid #e0e0e0;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background-color: #667eea;
+            color: #ffffff;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📸 TrafficCam Snapshot</h1>
+        </div>
+        <div class="content">
+            <p>Your traffic camera snapshot is ready! See the attached image for current conditions.</p>
+
+            <table>
+                <tr>
+                    <th colspan="2">Snapshot Information</th>
+                </tr>
+                <tr>
+                    <td class="label">Capture Time</td>
+                    <td>${timestamp}</td>
+                </tr>
+                <tr>
+                    <td class="label">Image Number</td>
+                    <td><span class="badge">${img_num} of ${total}</span></td>
+                </tr>
+                <tr>
+                    <td class="label">Camera URL</td>
+                    <td style="word-break: break-all;">${CAMERA_URL}</td>
+                </tr>
+                <tr>
+                    <td class="label">Status</td>
+                    <td style="color: #10b981; font-weight: 600;">✓ Successfully Captured</td>
+                </tr>
+            </table>
+        </div>
+        <div class="footer">
+            TrafficCam by Léon "Avic" Simmons | Automated Traffic Camera Monitoring
+        </div>
+    </div>
+</body>
+</html>
+EOF
 }
 
 # Removes the temporary image file after processing
@@ -179,6 +344,10 @@ cleanup() {
         rm -f "${IMAGE_FILE}"
         log "INFO" "Cleaned up temporary image file."
     fi
+
+    if [[ -f "${HTML_FILE}" ]]; then
+        rm -f "${HTML_FILE}"
+    fi
 }
 
 # Displays script usage information
@@ -186,7 +355,11 @@ show_usage() {
     cat <<EOF
 TrafficCam - Traffic Camera Snapshot Email Service
 
-Usage: ./trafficcam.sh
+Usage: ./trafficcam.sh [options]
+
+Options:
+  --html-off           Disable HTML email formatting (send plain text only)
+  -h, --help           Show this help message
 
 Environment Variables (optional configuration):
   TRAFFICCAM_COUNT     Number of images to capture (default: 10)
@@ -197,8 +370,11 @@ Environment Variables (optional configuration):
   TRAFFICCAM_TEMP      Temporary directory path (default: \$HOME/TEMP)
 
 Examples:
-  # Run with defaults
+  # Run with defaults (HTML email enabled)
   ./trafficcam.sh
+
+  # Disable HTML email formatting
+  ./trafficcam.sh --html-off
 
   # Capture 5 images every 30 seconds
   TRAFFICCAM_COUNT=5 TRAFFICCAM_INTERVAL=30 ./trafficcam.sh
@@ -216,11 +392,24 @@ EOF
 # ------------------------------------------------------------------------------
 
 main() {
-    # Handle help flag
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        show_usage
-        exit 0
-    fi
+    # Parse command-line arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            --html-off)
+                USE_HTML_EMAIL=false
+                shift
+                ;;
+            *)
+                log "ERROR" "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
 
     # Display startup banner
     log "INFO" "============================================"
@@ -231,6 +420,7 @@ main() {
     log "INFO" "  - Capture interval:  ${CAPTURE_INTERVAL} seconds"
     log "INFO" "  - Camera URL:        ${CAMERA_URL}"
     log "INFO" "  - Email recipient:   ${EMAIL_RECIPIENT}"
+    log "INFO" "  - Email format:      $([ "${USE_HTML_EMAIL}" == true ] && echo "HTML" || echo "Plain text")"
     log "INFO" "  - Temp directory:    ${TEMP_DIR}"
     log "INFO" "============================================"
 
@@ -253,7 +443,7 @@ main() {
         # Attempt to download the camera image
         if download_image; then
             # If download succeeded, send via email
-            if send_email; then
+            if send_email "${i}" "${IMAGE_COUNT}"; then
                 ((success_count++))
             else
                 ((failure_count++))
