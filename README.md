@@ -4,11 +4,13 @@ A shell script that downloads snapshot images from a traffic camera at regular i
 
 ## Features
 
+- **HTML Email Formatting** - Beautiful, styled emails with tables and color (can be disabled with `--html-off`)
 - **Configurable capture settings** - Customize image count, interval, camera URL, and more via environment variables
 - **Retry logic** - Automatically retries failed downloads up to 3 times
 - **Timestamped logging** - Clear, detailed output showing exactly what's happening
 - **Dependency checking** - Verifies required tools are installed before running
 - **Session statistics** - Summary of successful and failed captures at completion
+- **Systemd integration** - Easy setup as a systemd service or timer
 
 ## Requirements
 
@@ -46,7 +48,13 @@ brew install curl mpack
 ./trafficcam.sh
 ```
 
-This runs with default settings: 10 images captured at 60-second intervals.
+This runs with default settings: 10 images captured at 60-second intervals, sent as HTML emails.
+
+**Disable HTML email formatting:**
+
+```bash
+./trafficcam.sh --html-off
+```
 
 ### Configuration via Environment Variables
 
@@ -85,9 +93,89 @@ export TRAFFICCAM_INTERVAL=120
 ./trafficcam.sh
 ```
 
-### Scheduling with Cron
+### Scheduling (Automated Execution)
 
-To run the script automatically (e.g., during morning commute hours):
+#### Option 1: systemd (Recommended)
+
+Systemd provides better logging, process management, and system integration than cron.
+
+**One-time execution as a service:**
+
+1. Create a service file at `/etc/systemd/system/trafficcam.service`:
+
+```ini
+[Unit]
+Description=TrafficCam - Traffic Camera Snapshot Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME
+Environment="TRAFFICCAM_URL=http://camera.example.com/snapshot.jpg"
+Environment="TRAFFICCAM_EMAIL=user@example.com"
+Environment="TRAFFICCAM_COUNT=10"
+Environment="TRAFFICCAM_INTERVAL=60"
+ExecStart=/path/to/trafficcam.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+2. Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable trafficcam.service
+sudo systemctl start trafficcam.service
+```
+
+**Scheduled execution with systemd timer:**
+
+For recurring executions (e.g., daily at 7:00 AM), use a systemd timer instead of cron:
+
+1. Create the service file as shown above (without `[Install]` section)
+
+2. Create a timer file at `/etc/systemd/system/trafficcam.timer`:
+
+```ini
+[Unit]
+Description=TrafficCam Timer - Run during morning commute
+Requires=trafficcam.service
+
+[Timer]
+# Run at 7:00 AM on weekdays
+OnCalendar=Mon-Fri 07:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+3. Enable and start the timer:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable trafficcam.timer
+sudo systemctl start trafficcam.timer
+```
+
+4. Check timer status:
+
+```bash
+# View timer schedule
+sudo systemctl list-timers trafficcam.timer
+
+# View service logs
+sudo journalctl -u trafficcam.service -f
+```
+
+#### Option 2: Cron (Fallback)
+
+If you don't have systemd or prefer cron:
 
 ```bash
 # Edit crontab
@@ -95,6 +183,114 @@ crontab -e
 
 # Add entry to run at 7:00 AM on weekdays
 0 7 * * 1-5 TRAFFICCAM_URL="http://camera.example.com/snapshot.jpg" TRAFFICCAM_EMAIL="user@example.com" /path/to/trafficcam.sh >> /var/log/trafficcam.log 2>&1
+```
+
+### Systemd Troubleshooting
+
+Common issues when using systemd and how to resolve them:
+
+#### Service fails to start
+
+**Check service status:**
+```bash
+sudo systemctl status trafficcam.service
+```
+
+**View detailed logs:**
+```bash
+sudo journalctl -u trafficcam.service -n 50 --no-pager
+```
+
+**Common causes:**
+- Incorrect file paths in the service file
+- Wrong username or permissions
+- Missing environment variables
+
+#### Network not available
+
+If the service starts before the network is ready:
+
+```ini
+# Add to [Unit] section of service file
+After=network-online.target
+Wants=network-online.target
+```
+
+#### Permission denied errors
+
+Ensure the script is executable:
+```bash
+chmod +x /path/to/trafficcam.sh
+```
+
+Ensure the user has access to the temporary directory:
+```bash
+mkdir -p ~/TEMP
+chmod 755 ~/TEMP
+```
+
+#### Timer not firing
+
+**Check timer status:**
+```bash
+# List all timers
+sudo systemctl list-timers
+
+# Check specific timer
+sudo systemctl status trafficcam.timer
+```
+
+**Enable the timer if disabled:**
+```bash
+sudo systemctl enable trafficcam.timer
+sudo systemctl start trafficcam.timer
+```
+
+#### Environment variables not working
+
+Systemd doesn't load shell profiles. Define all variables in the service file:
+
+```ini
+[Service]
+Environment="TRAFFICCAM_URL=http://example.com/cam.jpg"
+Environment="TRAFFICCAM_EMAIL=user@example.com"
+```
+
+Or use an environment file:
+
+```ini
+[Service]
+EnvironmentFile=/etc/trafficcam/trafficcam.env
+```
+
+#### Email not sending
+
+**Check if ssmtp is configured:**
+```bash
+cat /etc/ssmtp/ssmtp.conf
+```
+
+**Test email manually:**
+```bash
+echo "Test" | mail -s "Test" user@example.com
+```
+
+**View service logs for email errors:**
+```bash
+sudo journalctl -u trafficcam.service | grep -i "email\|mpack"
+```
+
+#### Viewing logs in real-time
+
+```bash
+# Follow service logs
+sudo journalctl -u trafficcam.service -f
+
+# View logs from today
+sudo journalctl -u trafficcam.service --since today
+
+# View logs with priority level ERROR or higher
+sudo journalctl -u trafficcam.service -p err
 ```
 
 ## Output
